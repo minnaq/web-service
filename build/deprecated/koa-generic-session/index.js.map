@@ -1,0 +1,1 @@
+{"version":3,"sources":["../../../source/deprecated/koa-generic-session/index.js"],"names":["module","exports","require"],"mappings":";;AACAA,OAAOC,OAAP,GAAiBC,QAAQ,eAAR,CAAjB","file":"index.js","sourcesContent":["\nmodule.exports = require('./lib/session');\n"]}

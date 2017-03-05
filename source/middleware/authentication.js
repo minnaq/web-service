@@ -40,90 +40,97 @@ async function authenticate({ authentication, keys, validate_token })
 	this.authenticate = () => { throw new errors.Unauthenticated() }
 	this.role         = () => { throw new errors.Unauthenticated() }
 
-	// If no JWT token was found, then done
-	if (!token)
-	{
-		this.authentication_error = new errors.Unauthenticated(error)
-		return
-	}
+	let payload, user_id
+	if(token) {
 
-	// JWT token (is now accessible from Koa's `ctx`)
-	this.jwt = token
+		// If no JWT token was found, then done
+		// if (!token)
+		// {
+		// 	this.authentication_error = new errors.Unauthenticated(error)
+		// 	return
+		// }
 
-	// Verify JWT token integrity
-	// by checking its signature using the supplied `keys`
+		// JWT token (is now accessible from Koa's `ctx`)
+		this.jwt = token
 
-	let payload
+		// Verify JWT token integrity
+		// by checking its signature using the supplied `keys`
 
-	for (let secret of keys)
-	{
-		try
+		// let payload
+
+		for (let secret of keys)
 		{
-			payload = jwt.verify(token, secret)
-			break
-		}
-		catch (error)
-		{
-			// if authentication token expired
-			if (error.name === 'TokenExpiredError')
+			try
 			{
-				this.authentication_error = new errors.Unauthenticated('Token expired')
-				return
+				payload = jwt.verify(token, secret)
+				break
 			}
-
-			// try another `secret`
-			if (error.name === 'JsonWebTokenError')
+			catch (error)
 			{
-				continue
+				// if authentication token expired
+				if (error.name === 'TokenExpiredError')
+				{
+					this.authentication_error = new errors.Unauthenticated('Token expired')
+					return
+				}
+
+				// try another `secret`
+				if (error.name === 'JsonWebTokenError')
+				{
+					continue
+				}
+
+				// some other error
+				throw error
 			}
-
-			// some other error
-			throw error					
 		}
-	}
 
-	// If JWT token signature was unable to be verified, then exit
-	if (!payload)
-	{
-		this.authentication_error = new errors.Unauthenticated('Corrupt token')
-		return
-	}
-
-	// JWT token ID
-	const jwt_id = payload.jti
-
-	// `subject`
-	// (which is a user id)
-	const user_id = payload.sub
-
-	// Optional JWT token validation (by id)
-	// (for example, that it has not been revoked)
-	if (validate_token)
-	{
-		// Can validate the token via a request to a database, for example.
-		// Checks for `valid` property value inside the result object.
-		// (There can possibly be other properties such as `reason`)
-		const is_valid = (await validate_token(token, this)).valid
-
-		// If the JWT token happens to be invalid
-		// (expired or revoked, for example), then exit.
-		if (!is_valid)
+		// If JWT token signature was unable to be verified, then exit
+		if (!payload)
 		{
-			this.authentication_error = new errors.Unauthenticated(`Token revoked`)
+			this.authentication_error = new errors.Unauthenticated('Corrupt token')
 			return
 		}
-	}
 
-	// JWT token ID is now accessible via Koa's `ctx`
-	this.jwt_id = jwt_id
+		// JWT token ID
+		const jwt_id = payload.jti
+
+		// `subject`
+		// (which is a user id)
+		// const user_id = payload.sub
+		user_id = payload.sub
+
+		// Optional JWT token validation (by id)
+		// (for example, that it has not been revoked)
+		if (validate_token)
+		{
+			// Can validate the token via a request to a database, for example.
+			// Checks for `valid` property value inside the result object.
+			// (There can possibly be other properties such as `reason`)
+			const is_valid = (await validate_token(token, this)).valid
+
+			// If the JWT token happens to be invalid
+			// (expired or revoked, for example), then exit.
+			if (!is_valid)
+			{
+				this.authentication_error = new errors.Unauthenticated(`Token revoked`)
+				return
+			}
+		}
+
+		// JWT token ID is now accessible via Koa's `ctx`
+		this.jwt_id = jwt_id
+	}
 
 	// Extracts user data (description) from JWT token payload
 	// (`user` is now accessible via Koa's `ctx`)
-	this.user = authentication ? authentication(payload) : {}
+	// this.user = authentication ? authentication(payload) : {}
+	// tim huang 修改于 2017-03-03
+	this.user = authentication ? await authentication(payload, this) : {}
 
 	// Sets user id
 	this.user.id = user_id
-	
+
 	// Extra payload fields:
 	//
 	// 'iss' // Issuer
@@ -131,7 +138,7 @@ async function authenticate({ authentication, keys, validate_token })
 	// 'aud' // Audience
 	// 'exp' // Expiration time
 	// 'nbf' // Not before
-	// 'iat' // Issued at 
+	// 'iat' // Issued at
 	// 'jti' // JWT ID
 
 	// JWT token payload is accessible via Koa's `ctx`
@@ -145,7 +152,7 @@ async function authenticate({ authentication, keys, validate_token })
 	// A little helper which can be called from routes
 	// as `this.role('administrator')`
 	// which will throw if the user isn't administrator
-	// (`authentication` function needs to get 
+	// (`authentication` function needs to get
 	//  `role` from JWT payload for this to work)
 	this.role = (...roles) =>
 	{
@@ -159,6 +166,9 @@ async function authenticate({ authentication, keys, validate_token })
 
 		throw new errors.Unauthorized(`One of the following roles is required: ${roles}`)
 	}
+
+	// tim huang 修改于 2017-03-03
+	return this.user.isValid !== false
 }
 
 // Koa middleware creator
@@ -167,8 +177,12 @@ export default function(options)
 	// Koa middleware
 	return async function(ctx, next)
 	{
-		await authenticate.call(ctx, options)
-		await next()
+		// tim huang 修改于 2017-03-03
+
+		const isAuth = await authenticate.call(ctx, options)
+		if(isAuth) {
+			await next()
+		}
 	}
 }
 
@@ -179,7 +193,7 @@ export function issue_jwt_token({ payload, keys, user_id, jwt_id })
 	{
 		throw new Error("`jwt` function must take a single argument: an object { payload, keys, user_id, jwt_id }")
 	}
-	
+
 	if (!keys)
 	{
 		throw new Error(`JWT encryption "keys" weren't supplied`)
